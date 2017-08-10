@@ -4,7 +4,7 @@ public struct KafkaError: Error {
     
     // MARK: - Public Properties
     
-    public var rdError: rd_kafka_resp_err_t?
+    public private(set) var rdError: rd_kafka_resp_err_t?
     
     // MARK: - Overrides
     
