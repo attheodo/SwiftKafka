@@ -16,7 +16,7 @@ public struct KafkaConfig {
         if let config = config {
             
             guard let cfg = rd_kafka_conf_dup(config.configHandle) else {
-                throw SwiftKafkaError.configDuplicationError
+                throw KafkaError.configDuplicationError
             }
             
             configHandle = cfg
@@ -24,7 +24,7 @@ public struct KafkaConfig {
         } else {
             
             guard let cfg = rd_kafka_conf_new() else {
-                throw SwiftKafkaError.configCreationError
+                throw KafkaError.configCreationError
             }
             
             configHandle = cfg
@@ -43,7 +43,7 @@ public struct KafkaConfig {
     public func get(_ variable: String) throws -> String {
         
         guard let value = properties?[variable] else {
-            throw SwiftKafkaError.configVariableNotFound(variable)
+            throw KafkaError.configVariableNotFound(variable)
         }
         
         return value
@@ -69,11 +69,11 @@ public struct KafkaConfig {
             let errorDesc = String(cString: errStr)
             
             if result == RD_KAFKA_CONF_INVALID {
-                throw SwiftKafkaError.setConfigurationPropertyError(errorDesc)
+                throw KafkaError.setConfigurationPropertyError(errorDesc)
             }
             
             if result == RD_KAFKA_CONF_UNKNOWN {
-                throw SwiftKafkaError.setConfigurationPropertyError(errorDesc)
+                throw KafkaError.setConfigurationPropertyError(errorDesc)
             }
             
             return
