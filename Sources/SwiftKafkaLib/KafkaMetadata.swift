@@ -75,7 +75,7 @@ public struct Partition {
             }
             
             let partition = Partition(id: Int(p.id),
-                                      error: SwiftKafkaError.coreError(SwiftKafkaCoreError(rdError: p.err)),
+                                      error: KafkaError.coreError(KafkaCoreError(rdError: p.err)),
                                       leader: Int(p.leader),
                                       replicas: replicas,
                                       inSyncReplicas: inSyncReplicas)
@@ -94,7 +94,7 @@ public struct Partition {
     public let id: Int
     
     /// A parition error as reported by the broker
-    public let error: SwiftKafkaError?
+    public let error: KafkaError?
     
     /// The leader of that broker
     public let leader: Int
@@ -124,7 +124,7 @@ public struct Topic {
             
             let t = data.advanced(by: Int(i)).pointee
             let topic = Topic(name: String(cString: t.topic),
-                              error: SwiftKafkaError.coreError(SwiftKafkaCoreError(rdError: t.err)),
+                              error: KafkaError.coreError(KafkaCoreError(rdError: t.err)),
                               partitions: Partition.partitions(fromPartitionData: t.partitions,
                                                               numOfPartitions: t.partition_cnt))
             
@@ -142,7 +142,7 @@ public struct Topic {
     public let name: String
     
     /// Topic error as reported by the broker
-    public let error: SwiftKafkaError?
+    public let error: KafkaError?
     
     /// The partitions of this topic
     public let partitions: [Partition]
