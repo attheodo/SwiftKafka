@@ -35,7 +35,7 @@ public struct BrokerConnection {
 extension BrokerConnection: CustomStringConvertible {
     
     public var description: String {
-        return "\(`protocol`)\(host):\(port)"
+        return "\(`protocol`.rawValue)\(host):\(port)"
     }
     
 }
