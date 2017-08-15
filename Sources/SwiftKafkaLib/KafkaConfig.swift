@@ -81,6 +81,102 @@ public struct KafkaConfig {
         }
     }
     
+    public func configureOffsetCommitCallback() {
+        
+        rd_kafka_conf_set_offset_commit_cb(configHandle) { ptr, rawError, rawPartitions, hdlr in
+            
+            guard let rawPartitions = rawPartitions else {
+                return
+            }
+            
+            var consumerInstance: KafkaConsumer
+            let partitions = KafkaTopicPartition.partitions(fromCPartitionsList: rawPartitions)
+            
+            if let consumerRef = hdlr {
+                consumerInstance = Unmanaged<KafkaConsumer>.fromOpaque(consumerRef).takeUnretainedValue()
+            } else {
+                return
+            }
+            
+            guard let kafkaClientHandle = consumerInstance.kafkaClientHandle else {
+                return
+            }
+            
+            var error: KafkaError? = nil
+            
+            if rawError != RD_KAFKA_RESP_ERR_NO_ERROR {
+                error = KafkaError.coreError(KafkaCoreError(rdError: rawError))
+            }
+            
+            if let callback = consumerInstance.onOffsetsCommitClosure {
+                callback(error, partitions)
+            } else {
+                rd_kafka_yield(kafkaClientHandle)
+            }
+            
+        }
+        
+    }
+    
+    public func configureRebalanceCallback() {
+        
+        rd_kafka_conf_set_rebalance_cb(configHandle) { ptr, rawError, rawPartitions, hdlr in
+            
+            guard let rawPartitions = rawPartitions else {
+                return
+            }
+            
+            var consumerInstance: KafkaConsumer
+            let partitions = KafkaTopicPartition.partitions(fromCPartitionsList: rawPartitions)
+            
+            if let consumerRef = hdlr {
+                consumerInstance = Unmanaged<KafkaConsumer>.fromOpaque(consumerRef).takeUnretainedValue()
+            } else {
+                return
+            }
+            
+            guard let kafkaClientHandle = consumerInstance.kafkaClientHandle else {
+                return
+            }
+            
+            if rawError == RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS {
+                
+                if let assignClosure = consumerInstance.onAssignClosure {
+                    assignClosure(partitions)
+                } else {
+                    rd_kafka_yield(kafkaClientHandle)
+                }
+                
+            } else if rawError == RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS {
+                
+                if let revokeClosure = consumerInstance.onRevokeClosure {
+                    revokeClosure(partitions)
+                } else {
+                    rd_kafka_yield(kafkaClientHandle)
+                }
+                
+            }
+            
+            /**
+             librdkafka requires the rebalance callback to call `assign()` to sync state.
+             If the user did not do this manually in the callback or there was no callback set
+             then we handle that here
+             */
+            
+            guard consumerInstance.rebalanceAssigned > 0 else {
+                return
+            }
+            
+            if rawError == RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS {
+                rd_kafka_assign(kafkaClientHandle, rawPartitions)
+            } else {
+                rd_kafka_assign(kafkaClientHandle, nil)
+            }
+            
+        }
+        
+    }
+    
     // MARK: - Private Methods
     
     /**
