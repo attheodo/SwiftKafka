@@ -8,9 +8,9 @@
 
 import ckafka
 
-/// A struct used for creating and manipulating Kafka topic
+/// A class used for creating and manipulating Kafka topic
 /// configurations
-public struct TopicConfig {
+public class TopicConfig {
     
     // MARK: - Public Properties
     
@@ -30,21 +30,9 @@ public struct TopicConfig {
     init(byDiplicatingConfig config: TopicConfig? = nil) throws {
         
         if let config = config {
-            
-            guard let h = rd_kafka_topic_conf_dup(config.handle) else {
-                throw KafkaError.globalConfigDuplicationError
-            }
-            
-            handle = h
-            
+            handle = rd_kafka_topic_conf_dup(config.handle)
         } else {
-            
-            guard let h = rd_kafka_topic_conf_new() else {
-                throw KafkaError.globalConfigCreationError
-            }
-            
-            handle = h
-            
+            handle = rd_kafka_topic_conf_new()
         }
         
     }
@@ -76,8 +64,16 @@ public struct TopicConfig {
     }
     
     /**
+     Sets configuration variables to the topic config
+     - parameter variables: An array of configuration enums
+    */
+    public func set(_ variables: [TopicConfigProperty]) throws {
+        let _ = try variables.map({ try set($0) })
+    }
+    
+    /**
      Sets a value to a configuration variable
-     - parameter variable: A configuration enum variable
+     - parameter variable: A configuration enum
      */
     public func set(_ variable: TopicConfigProperty) throws {
         try set(variable.key, value: variable.value)
