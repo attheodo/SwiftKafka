@@ -1,3 +1,4 @@
+import Foundation
 import ckafka
 
 public enum OffsetPosition {
@@ -53,9 +54,12 @@ public enum OffsetPosition {
     
 }
 
-class KafkaConsumer: SwiftKafka {
+class KafkaConsumer: Kafka {
     
     // MARK: - Public Properties
+    
+    /// Returns a tuple containing the current partition assignments and 
+    /// an optional error if any
     public var assignment: (partitions: [KafkaTopicPartition]?, error: KafkaError?) {
        
         do {
@@ -69,25 +73,25 @@ class KafkaConsumer: SwiftKafka {
         
     }
     
-    public enum RebalanceType {
-        case assign
-        case revoke
-    }
-    
+    /// Internal variable for keeping track whether SwiftKafka needs
+    /// to manually call `assign()` in order to sync state.
     public private(set) var rebalanceAssigned: Int = 0
     
-    public var onAssignClosure: (([KafkaTopicPartition]) -> Void)?
-    public var onRevokeClosure: (([KafkaTopicPartition]) -> Void)?
-    public var onOffsetsCommitClosure: ((_ error: KafkaError?, _ partitions: [KafkaTopicPartition]) -> Void)?
+    public var onPartitionAssign: (([KafkaTopicPartition]) -> Void)?
+    public var onPartitionRevoke: (([KafkaTopicPartition]) -> Void)?
+    public var onOffsetsCommit: ((_ error: KafkaError?, _ partitions: [KafkaTopicPartition]) -> Void)?
+    
+    // MARK: - Private Properties
+    private var kafkaConfig: KafkaConfig?
     
     // MARK: - Initialiser
     
     public init(kafkaConfig: KafkaConfig? = nil) throws {
         
-        let kafkaConfig = try (kafkaConfig ?? (try KafkaConfig()))
+        self.kafkaConfig = try (kafkaConfig ?? (try KafkaConfig()))
         
-        kafkaConfig.configureOffsetCommitCallback()
-        kafkaConfig.configureRebalanceCallback()
+        kafkaConfig?.configureOffsetCommitCallback()
+        kafkaConfig?.configureRebalanceCallback()
         
         try super.init(withClientType: .consumer, andConfig: kafkaConfig)
         
@@ -95,7 +99,13 @@ class KafkaConsumer: SwiftKafka {
             throw KafkaError.unknownError
         }
         
-        rd_kafka_poll_set_consumer(kafkaClientHandle)
+        let error = rd_kafka_poll_set_consumer(kafkaClientHandle)
+        
+        if error != RD_KAFKA_RESP_ERR_NO_ERROR {
+            throw KafkaError.coreError(KafkaCoreError(rdError: error))
+        }
+        
+        registerNotifications()
         
     }
     
@@ -110,6 +120,8 @@ class KafkaConsumer: SwiftKafka {
         while(rd_kafka_outq_len(kafkaClientHandle) > 0) {
             rd_kafka_poll(kafkaClientHandle, 100)
         }
+        
+        rd_kafka_destroy(kafkaClientHandle)
 
     }
     
@@ -155,7 +167,7 @@ class KafkaConsumer: SwiftKafka {
         var topicsList = rd_kafka_topic_partition_list_new(Int32(topics.count))
         
         defer {
-            rd_kafka_topic_partition_list_destroy(topicsList)
+           rd_kafka_topic_partition_list_destroy(topicsList)
         }
         
         topics.forEach { topic in
@@ -168,6 +180,7 @@ class KafkaConsumer: SwiftKafka {
             throw KafkaError.coreError(KafkaCoreError(rdError: error))
         }
 
+        
     }
     
     /**
@@ -199,21 +212,45 @@ class KafkaConsumer: SwiftKafka {
 
     }
     
+    public func close() {
+        
+        guard let kafkaClientHandle = self.kafkaClientHandle else {
+            return
+        }
+        
+        rd_kafka_consumer_close(kafkaClientHandle)
+        
+    }
+    
     /**
      Commit the current partition assignment's offsets
-     - parameter async: Whether the operation should be executed asynchronously.
+     - parameter async: Whether the operation should be execute asynchronously.
      If `false` it will return immediately.
+     - **NOTE**: The consumer relies on the use of this method if `enable.auto.commit=false`
     */
     public func commit(async: Bool = true) throws {
-        try commit(async: async)
+        let items: [Int]? = nil
+        try genericCommit(items: items, async: async)
     }
     
+    /**
+     Commit the offsets of the passed topic + partitions list
+     - parameter async: Whether the operation should execute asynchronously.
+     If `false` it will return immediately.
+     - **NOTE**: The consumer relies on the use of this method if `enable.auto.commit=false`
+    */
     public func commit(topicPartitions partitions: [KafkaTopicPartition], async: Bool = true) throws {
-        try commit(items: partitions, async: async)
+        try genericCommit(items: partitions, async: async)
     }
     
+    /**
+     Commit the the message's offset + 1
+     - parameter async: Whether the operation should execute asynchronously.
+     If `false it will return immediately.
+     - **NOTE**: The consumer relies on the use of this method if `enable.auto.commit=false`
+    */
     public func commit(messages: [KafkaMessage], async: Bool = true) throws {
-        try commit(items: messages, async: async)
+        try genericCommit(items: messages, async: async)
     }
     
     /**
@@ -238,7 +275,11 @@ class KafkaConsumer: SwiftKafka {
         let m = rd_kafka_consumer_poll(kafkaClientHandle, timeout)
         
         defer {
-            rd_kafka_message_destroy(m)
+            
+            if m != nil {
+                rd_kafka_message_destroy(m)
+            }
+            
         }
         
         guard let msg = m?.pointee else {
@@ -315,7 +356,7 @@ class KafkaConsumer: SwiftKafka {
     
     // MARK: - Private Methods
     
-    private func commit<T>(items: [T]? = nil, async: Bool = true) throws {
+    private func genericCommit<T>(items: [T]? = nil, async: Bool = true) throws {
         
         guard let kafkaClientHandle = self.kafkaClientHandle else {
             throw KafkaError.unknownError
@@ -382,6 +423,74 @@ class KafkaConsumer: SwiftKafka {
             return KafkaTopicPartition.partitions(fromCPartitionsList: p)
         } else {
             throw KafkaError.unknownError
+        }
+        
+    }
+    
+    // MARK: - Notifications
+    private func registerNotifications() {
+        
+        guard let consumerName = self.name else {
+            return
+        }
+        
+        let nc = NotificationCenter.default
+        
+        nc.addObserver(self,
+                       selector: #selector(notificationHandler(notification:)),
+                       name: Notification.Name(consumerName),
+                       object: nil)
+    
+    }
+    
+    // MARK: Notification Selectors
+    @objc private func notificationHandler(notification: Notification) {
+        
+        guard let userInfo = notification.userInfo,
+              let kafkaNotification = KafkaConsumerNotification.fromDict(dict: userInfo) else
+        {
+            return
+        }
+        
+        rebalanceAssigned = 0
+        
+        switch kafkaNotification.notificationType {
+        
+        case .partitionsAssigned:
+         
+            if let callback = self.onPartitionAssign {
+                callback(kafkaNotification.partitions)
+            } else {
+                rd_kafka_yield(kafkaClientHandle)
+            }
+            
+            if rebalanceAssigned == 0 {
+                
+                let parts = KafkaTopicPartition.rawCPartitionList(fromPartitions: kafkaNotification.partitions)
+                rd_kafka_assign(kafkaClientHandle, parts)
+            
+            }
+            
+        case .partitionsRevoked:
+            
+            if let callback = self.onPartitionRevoke {
+                callback(kafkaNotification.partitions)
+            } else {
+                rd_kafka_yield(kafkaClientHandle)
+            }
+            
+            if rebalanceAssigned == 0 {
+                rd_kafka_assign(kafkaClientHandle, nil)
+            }
+        
+        case .offsetsCommitted:
+            
+            if let callback = self.onOffsetsCommit {
+                callback(kafkaNotification.error, kafkaNotification.partitions)
+            } else {
+                rd_kafka_yield(kafkaClientHandle)
+            }
+        
         }
         
     }

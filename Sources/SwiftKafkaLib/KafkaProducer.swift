@@ -1,11 +1,11 @@
 import Foundation
 import ckafka
 
-class KafkaProducer: SwiftKafka {
+class KafkaProducer: Kafka {
     
     // MARK: - Public Properties
     
-    public var messageDeliveredClosure: ((KafkaMessage) -> Void)?
+    public var onMessageDelivered: ((_ message: KafkaMessage?, _ error: KafkaError?) -> Void)?
     
     /// The number of messages waiting to be delivered
     /// to the broker
@@ -37,29 +37,10 @@ class KafkaProducer: SwiftKafka {
         
         let kafkaConfig = try (kafkaConfig ?? (try KafkaConfig()))
         
-        // Configure message delivery callback
-        rd_kafka_conf_set_dr_msg_cb(kafkaConfig.configHandle) { handler, message, _ in
-            
-            guard let rawMessage = message else {
-                return
-            }
-           
-            let message = KafkaMessage.message(fromRawMessage: rawMessage.pointee,
-                                               topic: String(cString: rd_kafka_topic_name(rawMessage.pointee.rkt)))
-            
-            if let producerRef = (rawMessage.pointee)._private {
-                
-                let producerInstance = Unmanaged<KafkaProducer>.fromOpaque(producerRef).takeUnretainedValue()
-                producerInstance.messageDeliveredClosure?(message)
-                
-            }
-            
-        }
+        kafkaConfig.configureMessageCallback()
         
         try super.init(withClientType: .producer, andConfig: kafkaConfig)
         try createKafkaTopic(withTopicConfig: topicConfig)
-        
-        KafkaProducer.clientInstances[kafkaClientHandle!] = self
         
     }
     
@@ -71,11 +52,6 @@ class KafkaProducer: SwiftKafka {
         if let topicHandle = self.topicHandle {
             rd_kafka_topic_destroy(topicHandle)
         }
-        
-        if let kafkaClientHandle = self.kafkaClientHandle {
-            KafkaProducer.clientInstances[kafkaClientHandle] = nil
-        }
-        
         
     }
     
@@ -190,6 +166,45 @@ class KafkaProducer: SwiftKafka {
         }
         
         self.topicHandle = t
+        
+    }
+    
+    // MARK: - Notifications
+    private func registerNotifications() {
+        
+        guard let producerName = self.name else {
+            return
+        }
+        
+        let nc = NotificationCenter.default
+        
+        nc.addObserver(self,
+                       selector: #selector(notificationHandler(notification:)),
+                       name: Notification.Name(producerName),
+                       object: nil)
+
+    }
+    
+    // MARK: Notification Selectors
+    @objc private func notificationHandler(notification: Notification) {
+        
+        guard let userInfo = notification.userInfo,
+              let kafkaNotification = KafkaProducerNotification.fromDict(dict: userInfo) else
+        {
+            return
+        }
+        
+        switch kafkaNotification.notificationType {
+            
+        case .messageReceived:
+        
+            if let callback = self.onMessageDelivered {
+                callback(kafkaNotification.message, kafkaNotification.error)
+            } else {
+                rd_kafka_yield(kafkaClientHandle)
+            }
+        
+        }
         
     }
     

@@ -5,8 +5,7 @@ import ckafka
 public struct KafkaMessage {
     
     // MARK: - Static
-    public static func message(fromRawMessage message: rd_kafka_message_t,
-                               topic: String? = nil) -> KafkaMessage
+    public static func message(fromRawMessage message: rd_kafka_message_t) -> KafkaMessage?
     {
         
         var error: KafkaError? = nil
@@ -38,7 +37,12 @@ public struct KafkaMessage {
             error = KafkaError.coreError(KafkaCoreError(rdError: message.err))
         }
         
-        return KafkaMessage(topic: topic,
+        
+        guard let topicPtr = message.rkt else {
+            return nil
+        }
+        
+        return KafkaMessage(topic: String(cString: rd_kafka_topic_name(topicPtr)),
                             key: key,
                             value: value,
                             partition: message.partition,

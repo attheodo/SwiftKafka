@@ -53,9 +53,13 @@ public struct KafkaTopicPartition {
         let cPartitions = rd_kafka_topic_partition_list_new(Int32(partitions.count))
         
         partitions.forEach { partition in
-            rd_kafka_topic_partition_list_add(cPartitions,
-                                              partition.topic.cString(using: .utf8),
-                                              partition.partition)
+            
+            let p = rd_kafka_topic_partition_list_add(cPartitions,
+                                                      partition.topic.cString(using: .utf8),
+                                                      partition.partition)
+            
+            p?.pointee.offset = partition.offset.value()
+            
         }
         
         return cPartitions

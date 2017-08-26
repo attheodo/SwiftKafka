@@ -9,7 +9,7 @@ public enum KafkaClientType {
     case consumer
     case producer
     
-    func rdType() -> rd_kafka_type_t {
+    func toLibRdType() -> rd_kafka_type_t {
         
         switch self {
         
@@ -24,7 +24,7 @@ public enum KafkaClientType {
     
 }
 
-final public class SwiftKafka {
+public class Kafka {
     
     // MARK: - Static
     
@@ -57,9 +57,13 @@ final public class SwiftKafka {
     /// The currently set client configuration
     public private(set) var configuration: KafkaConfig?
     
+    /// The currently set topic configuration
+    public private(set) var topicConfiguration: TopicConfig?
+    
     // MARK: - Initialiser
     public init(withClientType clientType: KafkaClientType,
-                andConfig config: KafkaConfig? = nil) throws
+                config: KafkaConfig? = nil,
+                andTopicConfig topicConfig: TopicConfig? = nil) throws
     {
         
         if config == nil {
@@ -74,12 +78,12 @@ final public class SwiftKafka {
             errString.deallocate(capacity: kSwiftKafkaCStringSize)
         }
         
-        guard let kafkaClientHandle = rd_kafka_new(clientType.rdType(),
+        guard let kafkaClientHandle = rd_kafka_new(clientType.toLibRdType(),
                                                    configuration?.configHandle,
                                                    errString,
                                                    kSwiftKafkaCStringSize) else
         {
-            throw SwiftKafkaError.kafkaClientHandleInitFailed(String(cString: errString))
+            throw KafkaError.kafkaClientHandleInitFailed(String(cString: errString))
         }
         
         self.kafkaClientHandle = kafkaClientHandle
@@ -109,8 +113,52 @@ final public class SwiftKafka {
     public func connect(toBrokers brokers: [BrokerConnection]) -> Int {
         
         let brokersList = brokers.map({ $0.description }).joined(separator: ",")
-        
         return Int(rd_kafka_brokers_add(kafkaClientHandle, brokersList))
+        
+    }
+    
+    public func queryWatermarkOffsets(forTopic topic: String,
+                                      partition: Int32 = RD_KAFKA_PARTITION_UA,
+                                      timeout: Int32 = 1000,
+                                      cached: Bool = false) throws -> (low: Int64, high: Int64)
+    {
+        
+        guard let kafkaClientHandle = self.kafkaClientHandle else {
+            throw KafkaError.unknownError
+        }
+        
+        let low = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        let high = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        
+        defer {
+            
+            low.deallocate(capacity: 1)
+            high.deallocate(capacity: 1)
+        
+        }
+        
+        var response: rd_kafka_resp_err_t
+        
+        if cached {
+            response = rd_kafka_get_watermark_offsets(kafkaClientHandle,
+                                                      topic,
+                                                      partition,
+                                                      low,
+                                                      high)
+        } else {
+            response = rd_kafka_query_watermark_offsets(kafkaClientHandle,
+                                                        topic,
+                                                        partition,
+                                                        low,
+                                                        high,
+                                                        timeout)
+        }
+        
+        guard response == RD_KAFKA_RESP_ERR_NO_ERROR else {
+            throw KafkaError.coreError(KafkaCoreError(rdError: response))
+        }
+        
+        return (low: low.pointee, high: high.pointee)
         
     }
     
@@ -120,18 +168,11 @@ final public class SwiftKafka {
     {
         
         guard let kafkaClientHandle = self.kafkaClientHandle else {
-            throw SwiftKafkaError.unknownError
+            throw KafkaError.unknownError
         }
         
         let ppMetadata = UnsafeMutablePointer<UnsafePointer<rd_kafka_metadata>?>.allocate(capacity: 1)
         var error: rd_kafka_resp_err_t
-        
-        defer {
-            
-            rd_kafka_metadata_destroy(ppMetadata.pointee)
-            ppMetadata.deallocate(capacity: 1)
-            
-        }
         
         if let topicHandle = topicHandle {
             error = rd_kafka_metadata(kafkaClientHandle, 0, topicHandle, ppMetadata, timeout)
@@ -140,13 +181,16 @@ final public class SwiftKafka {
         }
         
         guard error.rawValue == 0 else {
-            let coreError = SwiftKafkaCoreError(rdError: error)
-            throw SwiftKafkaError.coreError(coreError)
+            let coreError = KafkaCoreError(rdError: error)
+            throw KafkaError.coreError(coreError)
         }
         
         guard let rawMetadata = (ppMetadata.pointee)?.pointee else {
-            throw SwiftKafkaError.unknownError
+            throw KafkaError.unknownError
         }
+        
+        rd_kafka_metadata_destroy(ppMetadata.pointee)
+        ppMetadata.deallocate(capacity: 1)
         
         return Metadata.metadata(fromRawMetadata: rawMetadata)
         

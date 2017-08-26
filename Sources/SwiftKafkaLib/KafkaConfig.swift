@@ -1,3 +1,4 @@
+import Foundation
 import ckafka
 
 public struct KafkaConfig {
@@ -89,92 +90,84 @@ public struct KafkaConfig {
                 return
             }
             
-            var consumerInstance: KafkaConsumer
+            var notification: KafkaConsumerNotification
+            
+            let nc = NotificationCenter.default
             let partitions = KafkaTopicPartition.partitions(fromCPartitionsList: rawPartitions)
             
-            if let consumerRef = hdlr {
-                consumerInstance = Unmanaged<KafkaConsumer>.fromOpaque(consumerRef).takeUnretainedValue()
+            if rawError == RD_KAFKA_RESP_ERR_NO_ERROR {
+                notification = KafkaConsumerNotification(notificationType: .offsetsCommitted,
+                                                         partitions: partitions)
             } else {
-                return
+                
+                let error = KafkaError.coreError(KafkaCoreError(rdError: rawError))
+                
+                notification = KafkaConsumerNotification(notificationType: .offsetsCommitted,
+                                                         partitions: partitions,
+                                                         error: error)
+            
             }
             
-            guard let kafkaClientHandle = consumerInstance.kafkaClientHandle else {
-                return
-            }
-            
-            var error: KafkaError? = nil
-            
-            if rawError != RD_KAFKA_RESP_ERR_NO_ERROR {
-                error = KafkaError.coreError(KafkaCoreError(rdError: rawError))
-            }
-            
-            if let callback = consumerInstance.onOffsetsCommitClosure {
-                callback(error, partitions)
-            } else {
-                rd_kafka_yield(kafkaClientHandle)
-            }
-            
+            nc.post(name: NSNotification.Name(String(cString: rd_kafka_name(ptr))),
+                    object: nil,
+                    userInfo: notification.toDict())
         }
         
     }
     
     public func configureRebalanceCallback() {
         
-        rd_kafka_conf_set_rebalance_cb(configHandle) { ptr, rawError, rawPartitions, hdlr in
-            
+        rd_kafka_conf_set_rebalance_cb(configHandle) { ptr, rawError, rawPartitions, _ in
+        
             guard let rawPartitions = rawPartitions else {
                 return
             }
             
-            var consumerInstance: KafkaConsumer
+            let nc = NotificationCenter.default
             let partitions = KafkaTopicPartition.partitions(fromCPartitionsList: rawPartitions)
-            
-            if let consumerRef = hdlr {
-                consumerInstance = Unmanaged<KafkaConsumer>.fromOpaque(consumerRef).takeUnretainedValue()
-            } else {
-                return
-            }
-            
-            guard let kafkaClientHandle = consumerInstance.kafkaClientHandle else {
-                return
-            }
+            var notification: KafkaConsumerNotification
             
             if rawError == RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS {
-                
-                if let assignClosure = consumerInstance.onAssignClosure {
-                    assignClosure(partitions)
-                } else {
-                    rd_kafka_yield(kafkaClientHandle)
-                }
-                
+                notification = KafkaConsumerNotification(notificationType: .partitionsAssigned,
+                                                         partitions: partitions)
             } else if rawError == RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS {
-                
-                if let revokeClosure = consumerInstance.onRevokeClosure {
-                    revokeClosure(partitions)
-                } else {
-                    rd_kafka_yield(kafkaClientHandle)
-                }
-                
-            }
-            
-            /**
-             librdkafka requires the rebalance callback to call `assign()` to sync state.
-             If the user did not do this manually in the callback or there was no callback set
-             then we handle that here
-             */
-            
-            guard consumerInstance.rebalanceAssigned > 0 else {
+                notification = KafkaConsumerNotification(notificationType: .partitionsRevoked,
+                                                         partitions: partitions)
+            } else {
+                // TODO: Check whether `rawError` could be something meaningful
                 return
             }
             
-            if rawError == RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS {
-                rd_kafka_assign(kafkaClientHandle, rawPartitions)
-            } else {
-                rd_kafka_assign(kafkaClientHandle, nil)
-            }
+            nc.post(name: NSNotification.Name(String(cString: rd_kafka_name(ptr))),
+                    object: nil,
+                    userInfo: notification.toDict())
             
         }
         
+    }
+    
+    public func configureMessageCallback() {
+        
+        rd_kafka_conf_set_dr_msg_cb(configHandle) { ptr, rawMessage, _ in
+            
+            guard let rawMessage = rawMessage else {
+                return
+            }
+            
+            let nc = NotificationCenter.default
+            
+            let message = KafkaMessage.message(fromRawMessage: rawMessage.pointee)
+            
+            let notification = KafkaProducerNotification(notificationType: .messageReceived,
+                                                         message: message,
+                                                         error: message?.error)
+            
+            nc.post(name: NSNotification.Name(String(cString: rd_kafka_name(ptr))),
+                    object: nil,
+                    userInfo: notification.toDict())
+
+        }
+
     }
     
     // MARK: - Private Methods
