@@ -27,7 +27,7 @@ public class TopicConfig {
     /// Initialises a new configuration object
     /// - parameter config: An instance of `TopicConfig` to duplicate instead of creating
     /// a new configuration with default properties.
-    init(byDiplicatingConfig config: TopicConfig? = nil) throws {
+    init(byDuplicatingConfig config: TopicConfig? = nil) throws {
         
         if let config = config {
             handle = rd_kafka_topic_conf_dup(config.handle)
