@@ -36,7 +36,7 @@ public struct Broker {
         
         self.`protocol` = `protocol`
         self.host = host
-        self.port = port
+        self.port = port!
         
     }
     
