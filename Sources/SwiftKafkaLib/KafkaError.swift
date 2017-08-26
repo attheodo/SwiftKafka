@@ -6,19 +6,9 @@
 //
 //
 
+import ckafka
+
 public enum KafkaError: Error {
-    
-    /// When SwiftKafka fails to create a new global config
-    case globalConfigCreationError
-    
-    /// When SwiftKafka fails to duplicate the current config
-    case globalConfigDuplicationError
-    
-    /// When SwiftKafka fails to create a new topic config
-    case topicConfigCreationError
-    
-    /// When SwiftKafka fails to duplicate the current topic config
-    case topicConfigDuplicationError
     
     /// When a configuration variable could not be found
     case configVariableNotFound(String)
@@ -26,24 +16,56 @@ public enum KafkaError: Error {
     /// When a configuration variable is set to an invalid value
     case configVariableInvalidValue(String, String)
     
+    /// When base Kafka initialisation fails
+    case baseKafkaInitFailed(String)
+    
+    /// When something really shitty happens
+    case unknownError
+    
+    /// Errors emerging from `librdkafka` operations
+    case coreError(KafkaCoreError)
+    
     func localizedDescription() -> String {
         
         switch self {
-        case .globalConfigCreationError:
-            return "Could not create global Kafka configuration"
-        case .globalConfigDuplicationError:
-            return "Could not duplicate current global Kafka configuration"
-        case .topicConfigCreationError:
-            return "Could not create Kafka topic configuration"
-        case .topicConfigDuplicationError:
-            return "Could not duplicate current Kafka topic configuration"
         case .configVariableNotFound(let variable):
             return "Configuration variable \"\(variable)\" not found"
         case .configVariableInvalidValue(let variable, let error):
             return "Invalid configuration value for \"\(variable)\": \(error)"
+        case .baseKafkaInitFailed(let error):
+            return "Error while trying to initialise base Kafka client: \(error)"
+        case .unknownError:
+            return "An unknown error occured (possibly lost reference to an important pointer)"
+        case .coreError(let error):
+            return error.localizedDescription
         }
         
     }
     
 }
+
+public struct KafkaCoreError: Error {
+    
+    // MARK: - Public Properties
+    
+    public private(set) var error: rd_kafka_resp_err_t
+    
+    // MARK: - Initialiser
+    public init(_ error: rd_kafka_resp_err_t) {
+        self.error = error
+    }
+    
+    /// The error's enum name
+    public var enumName: String {
+        return String(cString: rd_kafka_err2name(error))
+    }
+    
+    // MARK: - Overrides
+    
+    public var localizedDescription: String {
+        return "[\(enumName)] \(String(cString: rd_kafka_err2str(error)))"
+    }
+}
+
+
 
