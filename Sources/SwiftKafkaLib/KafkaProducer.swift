@@ -40,6 +40,8 @@ class KafkaProducer: KafkaBase {
         
         try super.init(withClientType: .producer, globalConfig: globalConfig, andTopicConfig: topicConfig)
         
+        globalConfiguration?.setOpaquePointer(forKafkaClient: self)
+        
     }
     
     deinit {
