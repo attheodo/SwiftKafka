@@ -17,8 +17,10 @@ A *Swifty* wrapper for `librdkafka` for consuming and/or producing messages from
 
 <img src="https://photos-2.dropbox.com/t/2/AAApXdGdeOLwHS8cW-a3QjTo5cRJP7OKdl0b3r1Z_sw_Hw/12/1237004/png/32x32/3/1503856800/0/2/logo.png/EIXuhwEYnI2-7QMgAigCKAQ/_xuoBYEWM4X5XhwcDDkcd_TGYfSAggpmhKQxU22FI6E?dl=0&size=2048x1536&size_mode=3" alt="ATHSwift">
 
-## API
-*TODO*
+## TODO
+- [ ] Provide usage examples
+- [ ] Write API documentation
+- [ ] Write tests
 
 ## Installation
 
