@@ -137,4 +137,40 @@ public class KafkaBase {
         
     }
     
+    /**
+     Request metadata from the broker
+     - parameter topicHandle: Request information about this topic only. If `nil`, it will fetch metadata for all topics
+    in the cluster
+     - parameter timeout: Maximum response time in milliseconds before failing
+    */
+    public func getMetadata(forTopicHandle topicHandle: OpaquePointer? = nil, timeout: Int32 = 1000) throws -> Metadata {
+        
+        guard let h = handle else {
+            throw KafkaError.unknownError
+        }
+        
+        let ppMetadata = UnsafeMutablePointer<UnsafePointer<rd_kafka_metadata>?>.allocate(capacity: 1)
+        var error: rd_kafka_resp_err_t
+        
+        if let topicHandle = topicHandle {
+            error = rd_kafka_metadata(h, 0, topicHandle, ppMetadata, timeout)
+        } else {
+            error = rd_kafka_metadata(h, 1, nil, ppMetadata, timeout)
+        }
+        
+        guard error == RD_KAFKA_RESP_ERR_NO_ERROR else {
+            throw KafkaError.coreError(KafkaCoreError(error))
+        }
+        
+        guard let rawMetadata = (ppMetadata.pointee)?.pointee else {
+            throw KafkaError.unknownError
+        }
+        
+        rd_kafka_metadata_destroy(ppMetadata.pointee)
+        ppMetadata.deallocate(capacity: 1)
+        
+        return Metadata.metadata(fromRawMetadata: rawMetadata)
+        
+    }
+    
 }
