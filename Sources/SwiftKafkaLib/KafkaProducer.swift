@@ -158,7 +158,6 @@ class KafkaProducer: KafkaBase {
         rd_kafka_topic_destroy(topicHandle)
         
     }
-
     
     /**
      Wait for all messages in the producer queue to be delivered. 
