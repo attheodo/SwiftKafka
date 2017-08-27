@@ -1,117 +1,131 @@
+//
+//  KafkaProducer.swift
+//  SwiftKafka
+//
+//  Created by Athanasios Theodoridis on 26/08/2017.
+//
+//
+
 import Foundation
+
 import ckafka
 
-class KafkaProducer: Kafka {
-    
+class KafkaProducer: KafkaBase {
+ 
     // MARK: - Public Properties
-    
-    public var onMessageDelivered: ((_ message: KafkaMessage?, _ error: KafkaError?) -> Void)?
     
     /// The number of messages waiting to be delivered
     /// to the broker
-    public var numOfPendingMessages: Int32 {
+    public var numOfPendingMessages: Int32? {
         
-        guard let kafkaClientHandle = self.kafkaClientHandle else {
-            return 0
+        guard let h = handle else {
+            return nil
         }
         
-        return rd_kafka_outq_len(kafkaClientHandle)
-    
+        return rd_kafka_outq_len(h)
+        
     }
     
-    /// The underlying librdkafka C pointer handle for the topic
-    public private(set) var topicHandle: OpaquePointer? = nil
-    
-    /// The name of the producing topic
-    public let topic: String
-    
-    // MARK: - Private Properties
+    /// A closure to execute when a message is delivered
+    public var onMessageDelivery: MessageDeliveryClosure?
     
     // MARK: - Initialiser
-    public init(withTopicName topic: String,
-                topicConfig: TopicConfig? = nil,
-                kafkaConfig: KafkaConfig? = nil) throws
-    {
+    
+    public init(globalConfiguration: GlobalConfig? = nil, topicConfiguration: TopicConfig? = nil) throws {
         
-        self.topic = topic
+        let globalConfig = try (globalConfiguration ?? (try GlobalConfig()))
+        let topicConfig = try (topicConfiguration ?? (try TopicConfig()))
         
-        let kafkaConfig = try (kafkaConfig ?? (try KafkaConfig()))
+        globalConfig.configureMessageDeliveryCallback()
         
-        kafkaConfig.configureMessageCallback()
+        try super.init(withClientType: .producer, globalConfig: globalConfig, andTopicConfig: topicConfig)
         
-        try super.init(withClientType: .producer, andConfig: kafkaConfig)
-        try createKafkaTopic(withTopicConfig: topicConfig)
+        globalConfiguration?.setOpaquePointer(forKafkaClient: self)
         
     }
     
     deinit {
-        
-        // wait for the queue to be flushed
-        flush(1000)
-        
-        if let topicHandle = self.topicHandle {
-            rd_kafka_topic_destroy(topicHandle)
-        }
-        
+        let _ = try? flush(1000)
     }
     
     // MARK: - Public Methods
     
     /**
-     Wait for all messages in the producer queue to be delivered
+     Produce message to topic. This operation is asynchronous and you may want to pass in
+     `deliveryClosure` that will be called from `poll()` when the message has been deliverd or permanently failed.
+     - parameter topic: The name of the topic
+     - parameter key: The message key
+     - parameter value: The message value
+     - parameter partition: The partition to produce too (defaults to default partitioner)
+     - parameter deliveryClosure: A closure to execute if the message gets delivered or permanently failed.
     */
-    public func flush(_ timeout: UInt = 100) {
+    public func produce(topic: String,
+                        key: String? = nil,
+                        value: String,
+                        partition: Int32 = RD_KAFKA_PARTITION_UA,
+                        deliveryClosure: MessageDeliveryClosure? = nil) throws
+    {
         
-        while(numOfPendingMessages > 0) {
-            let _ = try? poll(timeout: Int32(timeout))
-        }
-        
-    }
-    
-    @discardableResult
-    public func poll(timeout: Int32 = 0) throws -> Int {
-        
-        guard let kafkaClientHandle = self.kafkaClientHandle else {
+        guard let h = handle else {
             throw KafkaError.unknownError
         }
         
-        return Int(rd_kafka_poll(kafkaClientHandle, timeout))
+        // config is being freed by `rd_kafka_topic_new` so we need to duplicate it and create a new instance
+        let topicConfig = try TopicConfig(byDuplicatingConfig: topicConfiguration)
+        
+        guard let topicHandle = rd_kafka_topic_new(h, topic, topicConfig.handle) else {
+            throw KafkaError.coreError(KafkaCoreError(rd_kafka_last_error()))
+        }
+        
+        let msgContainer = MessageContainer(producerInstance: self, deliveryClosure: deliveryClosure)
+        let msgContainerRef = UnsafeMutableRawPointer(Unmanaged.passRetained(msgContainer).toOpaque())
+        
+        let err = rd_kafka_produce(topicHandle,
+                                   partition,
+                                   RD_KAFKA_MSG_F_COPY,
+                                   strdup(value),
+                                   value.utf8.count,
+                                   key ?? nil,
+                                   key != nil ? key!.utf8.count : 0,
+                                   msgContainerRef)
+        
+        if err != 0 {
+            throw KafkaError.coreError(KafkaCoreError(rd_kafka_last_error()))
+        }
+        
+        rd_kafka_topic_destroy(topicHandle)
         
     }
     
-    public func produce(key: String? = nil, value: String, partition: Int32 = RD_KAFKA_PARTITION_UA) throws {
+    /**
+     Produce message to topic. This operation is asynchronous and you may want to pass in
+     `deliveryClosure` that will be called from `poll()` when the message has been deliverd or permanently failed.
+     - parameter topic: The name of the topic
+     - parameter key: The message key
+     - parameter value: The message value
+     - parameter partition: The partition to produce too (defaults to default partitioner)
+     - parameter deliveryClosure: A closure to execute if the message gets delivered or permanently failed.
+     */
+    public func produce(topic: String,
+                        key: Data? = nil,
+                        value: Data,
+                        partition: Int32 = RD_KAFKA_PARTITION_UA,
+                        deliveryClosure: MessageDeliveryClosure? = nil) throws
+    {
         
-        guard let topicHandle = self.topicHandle else {
+        guard let h = handle else {
             throw KafkaError.unknownError
         }
         
-        let selfRef = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        // config is being freed by `rd_kafka_topic_new` so we need to duplicate it and create a new instance
+        let topicConfig = try TopicConfig(byDuplicatingConfig: topicConfiguration)
         
-        let response = rd_kafka_produce(topicHandle,
-                                    partition,
-                                    RD_KAFKA_MSG_F_FREE,
-                                    strdup(value),
-                                    value.utf8.count,
-                                    key ?? nil,
-                                    key != nil ? key!.utf8.count : 0,
-                                    selfRef)
-        
-        guard response == RD_KAFKA_RESP_ERR_NO_ERROR.rawValue else {
-            
-            let error = rd_kafka_last_error()
-            throw KafkaError.coreError(KafkaCoreError(rdError: error))
-            
+        guard let topicHandle = rd_kafka_topic_new(h, topic, topicConfig.handle) else {
+            throw KafkaError.coreError(KafkaCoreError(rd_kafka_last_error()))
         }
         
-    }
-    
-    public func produce(key: Data? = nil, value: Data, partition: Int32 = RD_KAFKA_PARTITION_UA) throws {
-        
-        guard let topicHandle = self.topicHandle else {
-            throw KafkaError.unknownError
-        }
-        
-        let selfRef = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        let msgContainer = MessageContainer(producerInstance: self, deliveryClosure: deliveryClosure)
+        let msgContainerRef = UnsafeMutableRawPointer(Unmanaged.passRetained(msgContainer).toOpaque())
         
         let valueBytes = [UInt8](value)
         let valueBuffer = malloc(valueBytes.count)
@@ -130,81 +144,64 @@ class KafkaProducer: Kafka {
             let _ = keyBytes.withUnsafeBufferPointer {
                 memcpy(keyBuffer, $0.baseAddress, keyBytes.count)
             }
-
-        }
-        
-        let response = rd_kafka_produce(topicHandle,
-                                        partition,
-                                        RD_KAFKA_MSG_F_FREE,
-                                        valueBuffer,
-                                        valueBytes.count,
-                                        keyBuffer,
-                                        keyBytes.count,
-                                        selfRef)
-        
-        guard response == RD_KAFKA_RESP_ERR_NO_ERROR.rawValue else {
-            
-            let error = rd_kafka_last_error()
-            throw KafkaError.coreError(KafkaCoreError(rdError: error))
             
         }
-
+        
+        let err = rd_kafka_produce(topicHandle,
+                                   partition,
+                                   RD_KAFKA_MSG_F_COPY,
+                                   valueBuffer,
+                                   valueBytes.count,
+                                   keyBuffer,
+                                   keyBytes.count,
+                                   msgContainerRef)
+        
+        if err != 0 {
+            throw KafkaError.coreError(KafkaCoreError(rd_kafka_last_error()))
+        }
+        
+        rd_kafka_topic_destroy(topicHandle)
         
     }
     
-    // MARK: - Private Methods
-    private func createKafkaTopic(withTopicConfig topicConfig: TopicConfig? = nil) throws {
+    /**
+     Wait for all messages in the producer queue to be delivered. 
+     - **NOTE:** This method will trigger callbacks.
+     - parameter timeout: The time to wait in milliseconds
+     - returns: The number of messages still in the queue
+     */
+    @discardableResult
+    public func flush(_ timeout: Int32 = 100) throws -> Int32? {
         
-        guard let t = rd_kafka_topic_new(kafkaClientHandle,
-                                         topic,
-                                         topicConfig == nil ? nil : topicConfig?.configHandle) else
-        {
-            
-            let err = rd_kafka_last_error()
-            throw KafkaError.coreError(KafkaCoreError(rdError: err))
-            
+        guard let h = handle else {
+            return nil
         }
         
-        self.topicHandle = t
+        let error = rd_kafka_flush(h, timeout)
+        
+        if error != RD_KAFKA_RESP_ERR_NO_ERROR {
+            throw KafkaError.coreError(KafkaCoreError(error))
+        }
+        
+        return numOfPendingMessages
         
     }
     
-    // MARK: - Notifications
-    private func registerNotifications() {
+    /**
+     Polls the broker for events. Events will cause application provided callbacks to be called.
+     - parameter timeout: Specifies the maximum amount of time (in ms) that the call will block waiting for events.
+        - For non-blocking calls, set `timeout` to `0`
+        - To wait indefinately, set `timeout` to `-1`
+     - returns: The number of events served
+    */
+    @discardableResult
+    public func poll(timeout: Int32 = 0) throws -> Int {
         
-        guard let producerName = self.name else {
-            return
+        guard let h = handle else {
+            throw KafkaError.unknownError
         }
         
-        let nc = NotificationCenter.default
-        
-        nc.addObserver(self,
-                       selector: #selector(notificationHandler(notification:)),
-                       name: Notification.Name(producerName),
-                       object: nil)
-
-    }
-    
-    // MARK: Notification Selectors
-    @objc private func notificationHandler(notification: Notification) {
-        
-        guard let userInfo = notification.userInfo,
-              let kafkaNotification = KafkaProducerNotification.fromDict(dict: userInfo) else
-        {
-            return
-        }
-        
-        switch kafkaNotification.notificationType {
-            
-        case .messageReceived:
-        
-            if let callback = self.onMessageDelivered {
-                callback(kafkaNotification.message, kafkaNotification.error)
-            } else {
-                rd_kafka_yield(kafkaClientHandle)
-            }
-        
-        }
+        return Int(rd_kafka_poll(h, timeout))
         
     }
     

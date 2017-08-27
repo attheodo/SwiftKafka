@@ -1,19 +1,28 @@
+//
+//  Broker.swift
+//  SwiftKafka
+//
+//  Created by Athanasios Theodoridis on 26/08/2017.
+//
+//
+
 /// An enum representing the protocol used for a broker connection
-public enum BrokerConnectionProtocol: String {
+public enum BrokerProtocol: String {
     
-    case plaintext = "PLAINTEXT://"
-    case ssl = "SSL://"
-    case sasl = "SASL://"
+    case plaintext      = "PLAINTEXT://"
+    case ssl            = "SSL://"
+    case sasl           = "SASL://"
     case sasl_plaintext = "SASL_PLAINTEXT://"
     
 }
 
-public struct BrokerConnection {
+/// Represents a Kafka broker for connecting to
+public struct Broker {
     
     // MARK: - Private Properties
     
     /// The used protocol for this broker connection
-    fileprivate let `protocol`: BrokerConnectionProtocol
+    fileprivate let `protocol`: BrokerProtocol
     
     /// The port of this broker connection
     fileprivate let port: Int
@@ -22,17 +31,18 @@ public struct BrokerConnection {
     fileprivate let host: String
     
     // MARK: - Initialiser
-    init(withProtocol protocol: BrokerConnectionProtocol, host: String, port: Int) {
+    
+    init(withProtocol protocol: BrokerProtocol = .plaintext, host: String, port: Int? = 9092) {
         
         self.`protocol` = `protocol`
         self.host = host
-        self.port = port
+        self.port = port!
         
     }
     
 }
 
-extension BrokerConnection: CustomStringConvertible {
+extension Broker: CustomStringConvertible {
     
     public var description: String {
         return "\(`protocol`.rawValue)\(host):\(port)"

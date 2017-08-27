@@ -1,33 +1,38 @@
+//
+//  TopicConfig.swift
+//  SwiftKafka
+//
+//  Created by Athanasios Theodoridis on 26/08/2017.
+//
+//
+
 import ckafka
 
-public struct TopicConfig {
+/// A class used for creating and manipulating Kafka topic
+/// configurations
+public class TopicConfig {
     
     // MARK: - Public Properties
+    
+    /// The current configuration properties
     public var properties: [String: String]? {
-        return listConfigurationProperties()
+        return configurationProperties()
     }
     
-    public private(set) var configHandle: OpaquePointer
+    /// The current topic config handle pointer
+    public private(set) var handle: OpaquePointer
     
     // MARK: - Initialiser
+    
+    /// Initialises a new configuration object
+    /// - parameter config: An instance of `TopicConfig` to duplicate instead of creating
+    /// a new configuration with default properties.
     init(byDuplicatingConfig config: TopicConfig? = nil) throws {
         
         if let config = config {
-            
-            guard let cfg = rd_kafka_topic_conf_dup(config.configHandle) else {
-                throw KafkaError.topicConfigDuplicationError
-            }
-            
-            configHandle = cfg
-            
+            handle = rd_kafka_topic_conf_dup(config.handle)
         } else {
-            
-            guard let cfg = rd_kafka_topic_conf_new() else {
-                throw KafkaError.topicConfigCreationError
-            }
-            
-            configHandle = cfg
-            
+            handle = rd_kafka_topic_conf_new()
         }
         
     }
@@ -35,9 +40,18 @@ public struct TopicConfig {
     // MARK: - Public Methods
     
     /**
-     Returns the value of a topic configuration variable
+     Returns the value of a configuration variable
+     - parameter variable: An enum representing the configuration variable
+     - returns: A `String` containing the value of the configuration variable
+     */
+    public func get(_ variable: TopicConfigProperty) throws -> String {
+        return try get(variable.key)
+    }
+    
+    /**
+     Returns the value of a configuration variable
      - parameter variable: The name of the variable for which to get the value
-     - returns: A `Srting` containing the value of the topic configuration variable
+     - returns: A `String` containing the value of the configuration variable
      */
     public func get(_ variable: String) throws -> String {
         
@@ -50,14 +64,30 @@ public struct TopicConfig {
     }
     
     /**
-     Sets a value to a topic configuration variable
+     Sets configuration variables to the topic config
+     - parameter variables: An array of configuration enums
+    */
+    public func set(_ variables: [TopicConfigProperty]) throws {
+        let _ = try variables.map({ try set($0) })
+    }
+    
+    /**
+     Sets a value to a configuration variable
+     - parameter variable: A configuration enum
+     */
+    public func set(_ variable: TopicConfigProperty) throws {
+        try set(variable.key, value: variable.value)
+    }
+    
+    /**
+     Sets a value to a configuration variable
      - parameter variable: The name of the variable to set the value for
      - parameter value: The value of the configuration variable to set
      */
     public func set(_ variable: String, value: String) throws {
         
         let errStr = UnsafeMutablePointer<Int8>.allocate(capacity: kSwiftKafkaCStringSize)
-        let result = rd_kafka_topic_conf_set(configHandle, variable, value, errStr, kSwiftKafkaCStringSize)
+        let result = rd_kafka_topic_conf_set(handle, variable, value, errStr, kSwiftKafkaCStringSize)
         
         defer {
             errStr.deallocate(capacity: kSwiftKafkaCStringSize)
@@ -68,11 +98,11 @@ public struct TopicConfig {
             let errorDesc = String(cString: errStr)
             
             if result == RD_KAFKA_CONF_INVALID {
-                throw KafkaError.setConfigurationPropertyError(errorDesc)
+                throw KafkaError.configVariableInvalidValue(variable, errorDesc)
             }
             
             if result == RD_KAFKA_CONF_UNKNOWN {
-                throw KafkaError.setConfigurationPropertyError(errorDesc)
+                throw KafkaError.configVariableNotFound(variable)
             }
             
             return
@@ -84,14 +114,14 @@ public struct TopicConfig {
     
     /**
      Returns a dictionary containing all the properties
-     and values of the current configuration
+     and values of the current topic configuration
      */
-    private func listConfigurationProperties() -> [String: String]? {
+    private func configurationProperties() -> [String: String]? {
         
         var properties: [String: String] = [:]
         var propertiesCount = 0
         
-        guard let d = rd_kafka_topic_conf_dump(configHandle, &propertiesCount), propertiesCount > 0 else {
+        guard let d = rd_kafka_topic_conf_dump(handle, &propertiesCount), propertiesCount > 0 else {
             return nil
         }
         
@@ -114,5 +144,5 @@ public struct TopicConfig {
         return properties
         
     }
-
+    
 }

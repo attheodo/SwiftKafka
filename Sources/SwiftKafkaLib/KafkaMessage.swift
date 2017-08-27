@@ -1,3 +1,11 @@
+//
+//  KafkaMessage.swift
+//  SwiftKafka
+//
+//  Created by Athanasios Theodoridis on 26/08/2017.
+//
+//
+
 import Foundation
 
 import ckafka
@@ -5,6 +13,8 @@ import ckafka
 public struct KafkaMessage {
     
     // MARK: - Static
+    
+    /// Creates a `KafkaMessage` object from a raw `rd_kafka_message_t`
     public static func message(fromRawMessage message: rd_kafka_message_t) -> KafkaMessage?
     {
         
@@ -34,7 +44,7 @@ public struct KafkaMessage {
         
         // set the error if any
         if message.err != RD_KAFKA_RESP_ERR_NO_ERROR {
-            error = KafkaError.coreError(KafkaCoreError(rdError: message.err))
+            error = KafkaError.coreError(KafkaCoreError(message.err))
         }
         
         
@@ -50,7 +60,6 @@ public struct KafkaMessage {
                             error: error)
         
     }
-    
     // MARK: - Public Properties
     
     /// The topic for this message
@@ -100,7 +109,6 @@ public struct KafkaMessage {
         }
         
     }
-
     
     // MARK: - Initialiser
     init(topic: String?, key: Data?, value: Data?, partition: Int32, offset: Int64, error: KafkaError?) {
@@ -137,7 +145,7 @@ extension KafkaMessage: CustomStringConvertible {
                 } else {
                     return "#\(offset) [\(topic ?? "UKNOWN_TOPIC")] - [<data>(\(key.count))]=<data>(\(value.count))"
                 }
-
+                
             }
             
         } else if let value = self.value {
@@ -147,7 +155,7 @@ extension KafkaMessage: CustomStringConvertible {
             } else {
                 return "#\(offset) [\(topic ?? "UKNOWN_TOPIC")] - [NO_KEY]=<data>(\(value.count))"
             }
-
+            
         } else {
             return "#\(offset) [\(topic ?? "UKNOWN_TOPIC")] - [NO_KEY]=\"(NO_VALUE)\""
         }
