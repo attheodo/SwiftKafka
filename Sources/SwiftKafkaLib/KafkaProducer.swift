@@ -26,6 +26,9 @@ class KafkaProducer: KafkaBase {
         
     }
     
+    /// A closure to execute when a message is delivered
+    public var onMessageDelivery: MessageDeliveryClosure?
+    
     // MARK: - Initialiser
     
     public init(globalConfiguration: GlobalConfig? = nil, topicConfiguration: TopicConfig? = nil) throws {
