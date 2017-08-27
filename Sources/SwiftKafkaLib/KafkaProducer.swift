@@ -6,6 +6,8 @@
 //
 //
 
+import Foundation
+
 import ckafka
 
 class KafkaProducer: KafkaBase {
@@ -89,6 +91,74 @@ class KafkaProducer: KafkaBase {
         rd_kafka_topic_destroy(topicHandle)
         
     }
+    
+    /**
+     Produce message to topic. This operation is asynchronous and you may want to pass in
+     `deliveryClosure` that will be called from `poll()` when the message has been deliverd or permanently failed.
+     - parameter topic: The name of the topic
+     - parameter key: The message key
+     - parameter value: The message value
+     - parameter partition: The partition to produce too (defaults to default partitioner)
+     - parameter deliveryClosure: A closure to execute if the message gets delivered or permanently failed.
+     */
+    public func produce(topic: String,
+                        key: Data? = nil,
+                        value: Data,
+                        partition: Int32 = RD_KAFKA_PARTITION_UA,
+                        deliveryClosure: MessageDeliveryClosure? = nil) throws
+    {
+        
+        guard let h = handle else {
+            throw KafkaError.unknownError
+        }
+        
+        // config is being freed by `rd_kafka_topic_new` so we need to duplicate it and create a new instance
+        let topicConfig = try TopicConfig(byDuplicatingConfig: topicConfiguration)
+        
+        guard let topicHandle = rd_kafka_topic_new(h, topic, topicConfig.handle) else {
+            throw KafkaError.coreError(KafkaCoreError(rd_kafka_last_error()))
+        }
+        
+        let msgContainer = MessageContainer(producerInstance: self, deliveryClosure: deliveryClosure)
+        let msgContainerRef = UnsafeMutableRawPointer(Unmanaged.passRetained(msgContainer).toOpaque())
+        
+        let valueBytes = [UInt8](value)
+        let valueBuffer = malloc(valueBytes.count)
+        let _ = valueBytes.withUnsafeBufferPointer {
+            memcpy(valueBuffer, $0.baseAddress, valueBytes.count)
+        }
+        
+        var keyBytes: [UInt8] = []
+        var keyBuffer: UnsafeMutableRawPointer? = nil
+        
+        if let key = key {
+            
+            keyBytes = [UInt8](key)
+            keyBuffer = malloc(keyBytes.count)
+            
+            let _ = keyBytes.withUnsafeBufferPointer {
+                memcpy(keyBuffer, $0.baseAddress, keyBytes.count)
+            }
+            
+        }
+        
+        let err = rd_kafka_produce(topicHandle,
+                                   partition,
+                                   RD_KAFKA_MSG_F_COPY,
+                                   valueBuffer,
+                                   valueBytes.count,
+                                   keyBuffer,
+                                   keyBytes.count,
+                                   msgContainerRef)
+        
+        if err != 0 {
+            throw KafkaError.coreError(KafkaCoreError(rd_kafka_last_error()))
+        }
+        
+        rd_kafka_topic_destroy(topicHandle)
+        
+    }
+
     
     /**
      Wait for all messages in the producer queue to be delivered. 
