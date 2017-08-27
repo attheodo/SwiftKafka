@@ -220,6 +220,50 @@ class KafkaConsumer: KafkaBase {
     }
     
     /**
+     Retrieves the low and high offsets for a `TopicPartition`
+     - parameter topicPartition: The `TopicPartition` to return offsets for
+     - parameter timeout: The request timeout (only if `cached=false`)
+     - parameter cached: A boolean indicating whether to use cached information
+        - Regarding cached information: The low offset is updated periodically (if `statistics.interval.ms` is set)
+          while the high offset is updated on each message fetched from the broker for this partition.
+     - returns: A tuple with the `low` and `high` offsets
+    */
+    public func getWatermarkOffsets(forTopicPartition topicPartition: TopicPartition,
+                                    timeout: Int32 = 1000,
+                                    cached: Bool = false) throws -> (low: Int64, high: Int64)
+    {
+        
+        guard let h = handle else {
+            throw KafkaError.unknownError
+        }
+        
+        let low = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        let high = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        
+        defer {
+            
+            low.deallocate(capacity: 1)
+            high.deallocate(capacity: 1)
+            
+        }
+        
+        var err: rd_kafka_resp_err_t
+        
+        if cached {
+            err = rd_kafka_get_watermark_offsets(h, topicPartition.topic, topicPartition.partition, low, high)
+        } else {
+            err = rd_kafka_query_watermark_offsets(h, topicPartition.topic, topicPartition.partition, low, high, timeout)
+        }
+        
+        guard err == RD_KAFKA_RESP_ERR_NO_ERROR else {
+            throw KafkaError.coreError(KafkaCoreError(err))
+        }
+        
+        return (low: low.pointee, high: high.pointee)
+        
+    }
+    
+    /**
      Poll the consumer for messages or events. Triggers the callbacks.
      
      **Notes:** An application should make sure to call `poll()` at regular intervals,
