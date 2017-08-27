@@ -8,9 +8,9 @@
 
 import ckafka
 
-/// A struct used for creating and manipulating global Kafka
+/// A class used for creating and manipulating global Kafka
 /// configurations
-public struct GlobalConfig {
+public class GlobalConfig {
     
     // MARK: - Public Properties
     
@@ -30,21 +30,9 @@ public struct GlobalConfig {
     init(byDiplicatingConfig config: GlobalConfig? = nil) throws {
         
         if let config = config {
-            
-            guard let h = rd_kafka_conf_dup(config.handle) else {
-                throw KafkaError.globalConfigDuplicationError
-            }
-            
-            handle = h
-            
+            handle = rd_kafka_conf_dup(config.handle)
         } else {
-            
-            guard let h = rd_kafka_conf_new() else {
-                throw KafkaError.globalConfigCreationError
-            }
-            
-            handle = h
-            
+            handle = rd_kafka_conf_new()
         }
         
     }
@@ -75,6 +63,14 @@ public struct GlobalConfig {
         
     }
     
+    /**
+     Sets configuration variables to the global config
+     - parameter variables: An array of configuration enums
+     */
+    public func set(_ variables: [GlobalConfigProperty]) throws {
+        let _ = try variables.map({ try set($0) })
+    }
+
     /**
      Sets a value to a configuration variable
      - parameter variable: A configuration enum variable
@@ -112,6 +108,165 @@ public struct GlobalConfig {
             return
             
         }
+    
+    }
+    
+    /**
+     Configures the callback to call when a message is delivered.
+     This takes care calling both the top-level, producer callback, if any,
+     and the message-level, unique callback, if any.
+    */
+    internal func configureMessageDeliveryCallback() {
+        
+        rd_kafka_conf_set_dr_msg_cb(handle) { ptr, rawMessage, opaque in
+            
+            guard let rawMessage = rawMessage,
+                  let msgContainerRef = rawMessage.pointee._private else {
+                return
+            }
+            
+            var callbackCalls = 0
+            
+            let message = KafkaMessage.message(fromRawMessage: rawMessage.pointee)
+            let messageContainer = Unmanaged<MessageContainer>.fromOpaque(msgContainerRef).takeRetainedValue()
+            
+            // top-level, producer's callback
+            if let opaque = opaque {
+                
+                if let producer = Unmanaged<KafkaBase>.fromOpaque(opaque).takeUnretainedValue() as? KafkaProducer {
+                    
+                    if let callback = producer.onMessageDelivery {
+                        callback(message, message?.error)
+                        callbackCalls += 1
+                    }
+                }
+
+            }
+            
+            // message-level callback
+            if let deliveryClosure = messageContainer.deliveryClosure {
+            
+                callbackCalls += 1
+                deliveryClosure(message, message?.error)
+                
+            }
+            
+            if callbackCalls == 0 {
+                rd_kafka_yield(ptr)
+            }
+        
+        }
+        
+    }
+    
+    /**
+     Sets the client's opaque reference in order to be carried along
+     in `librdkafka`'s callbacks
+    */
+    internal func setOpaquePointer(forKafkaClient client: KafkaBase) {
+       
+        let clientRef = UnsafeMutableRawPointer(Unmanaged.passRetained(client).toOpaque())
+        
+        rd_kafka_conf_set_opaque(handle, clientRef)
+        rd_kafka_topic_conf_set_opaque(handle, clientRef)
+
+    }
+    
+    /**
+     Configures the callback to be executed when the consumer offsets have been commited
+    */
+    internal func configureOffsetCommitCallback() {
+        
+        rd_kafka_conf_set_offset_commit_cb(handle) { ptr, rawError, rawPartitions, opaque in
+            
+            guard let rawPartitions = rawPartitions, let opaque = opaque else {
+                return
+            }
+            
+            guard let consumer = Unmanaged<KafkaBase>.fromOpaque(opaque).takeUnretainedValue() as? KafkaConsumer else {
+                return
+            }
+            
+            guard let callback = consumer.onOffsetsCommit else {
+                
+                rd_kafka_yield(consumer.handle)
+                return
+                
+            }
+            
+            let partitions = TopicPartition.partitions(fromPartitionList: rawPartitions)
+            let error: KafkaError? = rawError != RD_KAFKA_RESP_ERR_NO_ERROR ? KafkaError.coreError(KafkaCoreError(rawError)) : nil
+        
+            callback(partitions, error)
+            
+        }
+        
+    }
+    
+    /**
+     Configures the callback to be executed when a partition rebalancing occurs for the consumer
+    */
+    internal func configureRebalanceCallback() {
+        
+        rd_kafka_conf_set_rebalance_cb(handle) { ptr, rawError, rawPartitions, opaque in
+            
+            guard let rawPartitions = rawPartitions,
+                  let opaque = opaque else
+            {
+                return
+            }
+            
+            guard let consumer = Unmanaged<KafkaBase>.fromOpaque(opaque).takeUnretainedValue() as? KafkaConsumer else {
+                return
+            }
+            
+            consumer.resetRebalanceAssignment()
+            
+            var callbacksCalled = 0
+            
+            let partitions = TopicPartition.partitions(fromPartitionList: rawPartitions)
+            
+            if rawError == RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS {
+                
+                if let callback = consumer.onPartitionAssign {
+                    
+                    callbacksCalled += 1
+                    callback(partitions)
+                    
+                }
+                
+            } else if rawError == RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS {
+                
+                if let callback = consumer.onPartitionRevoke {
+                    
+                    callbacksCalled += 1
+                    callback(partitions)
+                }
+                
+            }
+            
+            if callbacksCalled == 0 {
+                rd_kafka_yield(consumer.handle)
+            }
+            
+            /* 
+             * Fallback: librdkafka needs the rebalance_cb to call assign()
+             * to synchronize state, if the user did not do this from callback,
+             * or there was no callback, or the callback failed, then we perform
+             * that assign() call here instead. 
+             */
+            if consumer.rebalanceAssigned == 0 || callbacksCalled == 0 {
+                
+                if rawError == RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS {
+                    rd_kafka_assign(consumer.handle, rawPartitions)
+                } else if rawError == RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS {
+                    rd_kafka_assign(consumer.handle, nil)
+                }
+                
+            }
+            
+        }
+        
     }
     
     // MARK: - Private Methods
