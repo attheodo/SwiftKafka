@@ -60,6 +60,11 @@ public struct KafkaCoreError: Error {
         return String(cString: rd_kafka_err2name(error))
     }
     
+    /// The error's raw value
+    public var code: Int {
+        return Int(error.rawValue)
+    }
+    
     // MARK: - Overrides
     
     public var localizedDescription: String {
