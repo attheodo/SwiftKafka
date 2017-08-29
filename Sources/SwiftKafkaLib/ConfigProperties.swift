@@ -8,18 +8,18 @@
 
 public enum DebugContext: String {
     
-    case generic    = "generic"
-    case broker     = "broker"
-    case topic      = "topic"
-    case metadata   = "metadata"
-    case producer   = "producer"
-    case queue      = "queue"
-    case msg        = "msg"
-    case `protocol` = "protocol"
-    case cgrp       = "cgrp"
-    case security   = "security"
-    case fetch      = "fetch"
-    case all        = "all"
+    case generic
+    case broker
+    case topic
+    case metadata
+    case producer
+    case queue
+    case msg
+    case `protocol`
+    case cgrp
+    case security
+    case fetch
+    case all
     
 }
 
