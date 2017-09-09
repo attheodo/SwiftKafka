@@ -40,7 +40,6 @@ public enum OffsetPosition {
         case .beginning:
             return Int64(RD_KAFKA_OFFSET_BEGINNING)
             
-            
         case .invalid:
             return Int64(RD_KAFKA_OFFSET_INVALID)
             
